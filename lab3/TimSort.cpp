@@ -3,6 +3,16 @@
 #include <iostream>
 #include <stdlib.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <string.h>
 using namespace std;
 
 int sizeThreads;
@@ -11,12 +21,9 @@ int n;
 inline int GetRun(int n);
 struct Range {
 	int left;
-	int right;
-};
-struct Merge2Arr {
-	int left;
 	int mid;
 	int right;
+	int pidThread;
 };
 int *arr;
 // this function sorts array from left index to
@@ -46,12 +53,15 @@ int main(int argc, char **argv)
 	for (int i = 0; i < n; i++) {
         std::cin >> arr[i];
     }
-    clock_t start = clock();
+    //clock_t start = clock();
 	TimSort();
-	clock_t finish = clock();
-	double time = (double) (finish - start)/ CLOCKS_PER_SEC;
-	std::cout << time << std::endl;
-	//printArray(arr, n);
+	//clock_t finish = clock();
+	//double time = (double) (finish - start)/ CLOCKS_PER_SEC;
+	//std::cout << time << std::endl;
+	printArray(arr, n);
+	for (int i = 0; i < n-1; i++) {
+		if (arr[i] > arr[i+1]) std::cout <<"WRONG ANSWER " << arr[i] << "\t" << arr[i+1] << std::endl;
+	}
 	free(arr);
     return 0;
 }
@@ -61,11 +71,12 @@ void TimSort()
 	RUN = GetRun(n);
 	// ====================> Sort individual subarrays of size RUN <====================
 	pthread_t *thread = (pthread_t *)malloc(sizeThreads*sizeof(pthread_t *));
-	printf("Thread Count %d\n", sizeThreads);
-	Range k[sizeThreads];
+	//printf("Thread Count %d\n", sizeThreads);
+	//Range k[sizeThreads];
+	Range *k = (Range *)malloc(sizeof(Range)*sizeThreads);
 	int count = 0;
 	int shifted = 0;
-    for (int i = 0; i < n; i+=RUN) {
+    for (int i = 0; i < n; i += RUN) {
 		if (count == sizeThreads) {
 			count = 0;
 			shifted++;
@@ -73,8 +84,9 @@ void TimSort()
 		if (shifted > 0) {
 			pthread_join(thread[count], NULL);
 		}
+		k[count].pidThread = count;
 		k[count].left = i;
-		k[count].right = min(i + RUN - 1, n - 1);
+		k[count].right = min(i + RUN, n);
 		pthread_create(&thread[count], NULL, insertionSort, &k[count]);
 		count++;
 	}
@@ -85,8 +97,8 @@ void TimSort()
 	for (int i = 0; i < count; i++) {
 		pthread_join(thread[i], NULL);
 	}
+	//std::cout << RUN;
 	//=================> Merging all subarray <===================
-	Merge2Arr Index[sizeThreads/2];
 	for (int size = RUN; size < n; size = 2*size)
     {
 		shifted = 0;
@@ -100,11 +112,12 @@ void TimSort()
 			if (shifted > 0) {
 				pthread_join(thread[count], NULL);
 			}
-			
-			Index[count].right = min((left + 2*size - 1), (n-1));
-			Index[count].left = left;
-			Index[count].mid = (Index[count].left+Index[count].right)/2 ;
-			pthread_create(&thread[count], NULL, merge, &Index[count]);
+			k[count].pidThread = count;
+			k[count].right = min((left + 2*size), n);
+			k[count].left = left;
+			k[count].mid = left+size;
+			//std::cout << "Thread num " << count << std::endl;
+			pthread_create(&thread[count], NULL, merge, &k[count]);
 			count++;
 		}
 
@@ -115,6 +128,7 @@ void TimSort()
 			pthread_join(thread[i], NULL);
 		}
 	}
+	free(k);
 	free(thread);
 }
 
@@ -123,16 +137,13 @@ void *insertionSort(void *arg)
 	Range *tmp = (Range *) arg;
 	int left = tmp->left;
 	int right = tmp->right;
-    for (int i = left + 1; i <= right; i++)
-    {
-        int temp = arr[i];
-        int j = i - 1;
-        while (arr[j] > temp && j >= left)
-        {
-            arr[j+1] = arr[j];
-            j--;
-        }
-        arr[j+1] = temp;
+	
+	for (int i = left; i < right; i++) { 
+    	int x = arr[i];
+		int j;
+    	for (j = i - 1; j >= left && arr[j] > x; j--)
+    		arr[j+1] = arr[j];  	
+    	arr[j+1] = x;
 	}
 } 
 
@@ -140,15 +151,22 @@ void *merge(void *arg)
 {
     // original array is broken in two parts
 	// left and right array
-	Merge2Arr *tmp = (Merge2Arr *) arg; 
-    int len1 = tmp->mid - tmp->left + 1, len2 = tmp->right - tmp->mid;
-    int left[len1], right[len2];
-    for (int i = 0; i < len1; i++)
+	Range *tmp = (Range *) arg; 
+    
+	int len1 = tmp->mid - tmp->left, len2 = tmp->right - tmp->mid;
+    
+	//int left[len1], right[len2];
+	int *left = (int *)malloc(sizeof(int)*len1);
+	int *right = (int *)malloc(sizeof(int)*len2);
+    //std::cout << "TREAD " << tmp->pidThread << " left " << tmp->left << " mid " << tmp->mid << " right " << tmp->right;
+	//std::cout << " len1 " << len1 << " len2 " << len2  << std::endl;
+	for (int i = 0; i < len1; i++)
         left[i] = arr[tmp->left + i];
     for (int i = 0; i < len2; i++)
-        right[i] = arr[tmp->mid + 1 + i];
+        right[i] = arr[tmp->mid + i];
     int i = 0;
     int j = 0;
+	
     int k = tmp->left;
     // after comparing, we merge those two array
     // in larger sub array
@@ -180,6 +198,8 @@ void *merge(void *arg)
         k++;
         j++;
 	}
+	free(left);
+	free(right);
 }
 
 inline int GetRun(int n) {
@@ -195,7 +215,7 @@ inline int GetRun(int n) {
 void printArray(int arr[], int n)
 {
     for (int i = 0; i < n; i++)
-        printf("%d  ", arr[i]);
-    printf("\n");
+        printf("%d\t", arr[i]);
+	std::cout << std::endl;
 }
  
